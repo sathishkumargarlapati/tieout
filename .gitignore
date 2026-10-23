@@ -1,0 +1,30 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+build/
+dist/
+.venv/
+venv/
+
+# Tooling
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+htmlcov/
+
+# Editors and OS
+.idea/
+.vscode/
+.DS_Store
+
+# Large official downloads and local outputs. Keep them out of the repository:
+# download them from the agencies yourself.
+MDRM.zip
+MDRM_CSV.csv
+*.duckdb
+*.duckdb.wal
+/taxonomy/
+/output/
