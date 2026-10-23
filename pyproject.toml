@@ -1,0 +1,81 @@
+[build-system]
+requires = ["hatchling>=1.27"]
+build-backend = "hatchling.build"
+
+[project]
+name = "tieout"
+version = "0.1.0"
+description = "Run the FFIEC Call Report edits as plain SQL inside your own data warehouse, days before filing."
+readme = "README.md"
+license = "Apache-2.0"
+license-files = ["LICENSE"]
+requires-python = ">=3.10"
+authors = [{ name = "Sathish Kumar Garlapati" }]
+keywords = [
+    "call report",
+    "ffiec",
+    "fdic",
+    "federal reserve",
+    "occ",
+    "regulatory reporting",
+    "xbrl",
+    "mdrm",
+    "duckdb",
+    "data quality",
+    "banking",
+]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "Intended Audience :: Financial and Insurance Industry",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3 :: Only",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: SQL",
+    "Topic :: Office/Business :: Financial",
+    "Topic :: Database",
+    "Typing :: Typed",
+]
+dependencies = ["duckdb>=1.1"]
+
+[project.optional-dependencies]
+dev = ["pytest>=8", "ruff>=0.6"]
+
+[project.scripts]
+tieout = "tieout.cli:main"
+
+[project.urls]
+Homepage = "https://github.com/sathishkumargarlapati/tieout"
+Source = "https://github.com/sathishkumargarlapati/tieout"
+Issues = "https://github.com/sathishkumargarlapati/tieout/issues"
+Changelog = "https://github.com/sathishkumargarlapati/tieout/blob/main/CHANGELOG.md"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/tieout"]
+
+[tool.hatch.build.targets.sdist]
+include = [
+    "src/tieout",
+    "tests",
+    "docs",
+    "examples",
+    "README.md",
+    "CHANGELOG.md",
+    "LICENSE",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra"
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP", "SIM", "RUF"]
