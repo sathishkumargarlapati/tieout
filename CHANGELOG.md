@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.2.0 (unreleased)
+
+The second module: Ground Truth.
+
+- `tieout ground-truth` runs the compiled validity edits on every institution's public Call Report for a quarter. It reports how often TieOut agrees with the reports the agencies accepted, and lists every disagreement with an example institution and the values involved. Writes `ground-truth.md`, `ground-truth.csv` and `failures.csv`.
+- `tieout bulk` converts the FFIEC CDR bulk download ("Call Reports -- Single Period", tab-delimited) into TieOut's long format, as Parquet or CSV. It handles the files' documented quirks (line breaks and tabs inside text values, `CONF` for confidential values, schedules split into parts, items repeated across schedules) and counts every repair.
+- `--only-rssd` limits a ground-truth run to a list of institutions, for example the filers of one form.
+- Each compiled check now also has a counted form (`CompiledCheck.summary_sql`): how many institutions the edit ran on, and how many passed, failed or could not be evaluated.
+- Python API: `tieout.load_bulk` and `tieout.run_ground_truth`.
+
 ## 0.1.0 (unreleased)
 
 The first module: the rule compiler.

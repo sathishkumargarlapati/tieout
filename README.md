@@ -70,6 +70,16 @@ tieout check --data items.parquet --edits edits.csv --report-date 2026-09-30 --o
 
 The data to check is one long table: institution, report date, MDRM item and value. [Preparing your data](docs/your-data.md) explains it, and [The edit formula language](docs/rule-language.md) explains how each formula becomes SQL.
 
+## Check TieOut against every filed Call Report
+
+A Call Report must pass every validity edit before it is filed, so every institution's public Call Report is a test case. `tieout ground-truth` runs the compiled validity edits on all of them for a quarter and reports how often TieOut agrees with the reports the agencies accepted. Every disagreement is listed with the institution and the values involved, so it can be traced and fixed, and anyone can rerun the measurement from the public data.
+
+```bash
+tieout ground-truth "FFIEC CDR Call Bulk All Schedules 06302026.zip" --edits edits.csv --out-dir ground-truth
+```
+
+The data is the FFIEC CDR's free [bulk download](https://cdr.ffiec.gov/public/PWS/DownloadBulkData.aspx). [Ground Truth](docs/ground-truth.md) explains the method and how to read the results. `tieout bulk` converts the same download into TieOut's long format, as Parquet or CSV, for any other use.
+
 ## Principles
 
 - **The regulators' rules, nothing invented.** Every check is generated from the agencies' published materials and cites its source.
@@ -80,7 +90,12 @@ The data to check is one long table: institution, report date, MDRM item and val
 
 ## Status
 
-TieOut is released one module at a time. Version 0.1 delivers the first module, the rule compiler: the regulators' published edits in, readable SQL checks out. It reads the formula linkbase as the FFIEC's CDR Interchange Specification describes it, and it is tested with the specification's own formula examples and with synthetic data. If it reads your taxonomy differently than you expect, please [open an issue](https://github.com/sathishkumargarlapati/tieout/issues). Watch this repository to follow each release.
+TieOut is released one module at a time. Shipped so far:
+
+1. **The rule compiler** (0.1): the regulators' published edits in, readable SQL checks out.
+2. **Ground Truth** (0.2): those checks tested against every institution's public Call Report.
+
+TieOut reads the formula linkbase as the FFIEC's CDR Interchange Specification describes it, and it is tested with the specification's own formula examples and with synthetic data. Ground Truth exists to measure it against real filings. If TieOut reads your taxonomy or data differently than you expect, please [open an issue](https://github.com/sathishkumargarlapati/tieout/issues). Watch this repository to follow each release.
 
 TieOut does not replace the validation performed by the FFIEC Central Data Repository (CDR), your filing software, or your own review.
 
