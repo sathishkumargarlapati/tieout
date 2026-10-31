@@ -123,6 +123,8 @@ ruff check . && ruff format --check .
 pytest
 ```
 
+Maintainers publish releases as described in [Releasing TieOut](docs/releasing.md).
+
 ## License
 
 Licensed under the [Apache License 2.0](LICENSE).
