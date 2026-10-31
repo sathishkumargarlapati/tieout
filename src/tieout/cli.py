@@ -2,10 +2,12 @@
 
 ::
 
-    tieout extract  TAXONOMY            read the edits from the FFIEC taxonomy into a CSV file
-    tieout compile  EDITS               turn edits into readable SQL checks
-    tieout check    --data FILE ...     run the checks against your data
-    tieout mdrm     MDRM_FILE ITEM ...  look items up in the Federal Reserve's MDRM dictionary
+    tieout extract       TAXONOMY            read the edits from the FFIEC taxonomy
+    tieout compile       EDITS               turn edits into readable SQL checks
+    tieout check         --data FILE ...     run the checks against your data
+    tieout mdrm          MDRM_FILE ITEM ...  look items up in the MDRM dictionary
+    tieout bulk          BULK_ZIP            convert the FFIEC bulk Call Report data
+    tieout ground-truth  BULK_ZIP ...        run the edits on every public Call Report
 
 Run ``tieout <command> --help`` for the options of each command.
 """
@@ -22,8 +24,10 @@ from pathlib import Path
 import duckdb
 
 from ._version import __version__
+from .cdr import BULK_ITEMS_TABLE, BulkFormatError, load_bulk
 from .compiler import compile_edits
 from .edits import DEFAULT_TYPES, Edit, EditFileError, filter_edits, read_edits_csv, write_edits_csv
+from .groundtruth import read_rssd_list, run_ground_truth
 from .mdrm import MdrmDictionary, MdrmFormatError
 from .runner import CheckReport, Columns, DataError, check
 from .taxonomy import TaxonomyError, read_taxonomy
@@ -175,6 +179,57 @@ def _cmd_mdrm(args: argparse.Namespace) -> int:
     return _EXIT_FAILURES if missing else _EXIT_OK
 
 
+def _cmd_bulk(args: argparse.Namespace) -> int:
+    connection = duckdb.connect()
+    bulk = load_bulk(connection, args.bulk, report_date=args.report_date)
+    _say(bulk.summary())
+    out = Path(args.out)
+    target = "'" + str(out).replace("'", "''") + "'"
+    if out.suffix.lower() == ".csv":
+        options = "FORMAT csv, HEADER true"
+    elif out.suffix.lower() in (".parquet", ".pq"):
+        options = "FORMAT parquet"
+    else:
+        raise DataError(f"{out}: write a .parquet or .csv file")
+    connection.execute(
+        f"COPY (SELECT * FROM {BULK_ITEMS_TABLE} ORDER BY rssd_id, mdrm) TO {target} ({options})"
+    )
+    _say(f"Wrote {bulk.values:,} values for {bulk.filers:,} institutions to {out}")
+    return _EXIT_OK
+
+
+def _cmd_ground_truth(args: argparse.Namespace) -> int:
+    edits = _load_edits(args.edits, args.source)
+    dictionary = _load_dictionary(args.mdrm)
+    connection = duckdb.connect()
+    bulk = load_bulk(connection, args.bulk, report_date=args.report_date)
+    _say(bulk.summary())
+    only = read_rssd_list(args.only_rssd) if args.only_rssd else None
+    report = run_ground_truth(
+        connection,
+        edits,
+        report_date=bulk.report_date,
+        types=args.types,
+        dictionary=dictionary,
+        only_rssd=only,
+        bulk=bulk,
+    )
+    out_dir = Path(args.out_dir)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    (out_dir / "ground-truth.md").write_text(
+        report.to_markdown(edits_source=Path(args.edits).name), encoding="utf-8"
+    )
+    report.write_csv(out_dir / "ground-truth.csv")
+    failures = CheckReport(failures=report.all_failures())
+    failures.write_csv(out_dir / "failures.csv")
+    _say(report.summary())
+    _report_skipped(report.skipped)
+    for edit_id, message in report.execution_errors:
+        _say(f"  {edit_id}: {message}")
+    _say(f"Wrote ground-truth.md, ground-truth.csv and failures.csv to {out_dir}")
+    return _EXIT_ERROR if report.execution_errors else _EXIT_OK
+
+
 # -- output helpers ---------------------------------------------------------------
 
 
@@ -306,6 +361,40 @@ def build_parser() -> argparse.ArgumentParser:
     mdrm.add_argument("items", nargs="+", help="MDRM identifiers, such as RCON2170")
     mdrm.add_argument("--as-of", type=_iso_date, help="show only rows in effect on this date")
     mdrm.set_defaults(handler=_cmd_mdrm)
+
+    bulk = commands.add_parser(
+        "bulk",
+        help="convert the FFIEC bulk Call Report data to TieOut's format",
+        description="Convert the FFIEC CDR bulk download 'Call Reports -- Single Period' "
+        "(tab-delimited zip file or its folder) into one long table: rssd_id, report_date, "
+        "mdrm and value.",
+    )
+    bulk.add_argument("bulk", help="the bulk zip file from the FFIEC CDR, or its folder")
+    bulk.add_argument("--out", required=True, help="a .parquet or .csv file to write")
+    bulk.add_argument("--report-date", type=_iso_date, help="default: read from the file names")
+    bulk.set_defaults(handler=_cmd_bulk)
+
+    ground = commands.add_parser(
+        "ground-truth",
+        help="run the edits on every institution's public Call Report",
+        description="Run the edits on every institution's public Call Report for one quarter "
+        "and report how often TieOut agrees with the filed reports.",
+    )
+    ground.add_argument("bulk", help="the bulk zip file from the FFIEC CDR, or its folder")
+    ground.add_argument(
+        "--edits", required=True, help="an edits CSV file, or the taxonomy zip file or folder"
+    )
+    ground.add_argument(
+        "--types", type=_types, default=("validity",), help="edit types to run (default: validity)"
+    )
+    ground.add_argument("--source", help=source_help)
+    ground.add_argument("--report-date", type=_iso_date, help="default: read from the file names")
+    ground.add_argument("--mdrm", help="MDRM.zip or MDRM_CSV.csv, to flag unknown items")
+    ground.add_argument(
+        "--only-rssd", help="a file listing the RSSD IDs to check, one per line (first column)"
+    )
+    ground.add_argument("--out-dir", default="ground-truth", help="default: ./ground-truth")
+    ground.set_defaults(handler=_cmd_ground_truth)
     return parser
 
 
@@ -315,6 +404,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     try:
         return int(args.handler(args))
     except (
+        BulkFormatError,
         DataError,
         EditFileError,
         MdrmFormatError,

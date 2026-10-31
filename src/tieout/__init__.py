@@ -12,6 +12,7 @@ Typical use::
 """
 
 from ._version import __version__
+from .cdr import BulkData, BulkFormatError, load_bulk
 from .compiler import (
     CompiledCheck,
     CompileResult,
@@ -22,20 +23,25 @@ from .compiler import (
 )
 from .edits import DEFAULT_TYPES, Edit, filter_edits, read_edits_csv, write_edits_csv
 from .expr import FormulaSyntaxError, parse
+from .groundtruth import EditOutcome, GroundTruthReport, run_ground_truth
 from .mdrm import MdrmDictionary, MdrmItem
 from .runner import CheckReport, Columns, DataError, Failure, check, load_items, run_checks
 from .taxonomy import TaxonomyEdits, read_taxonomy
 
 __all__ = [
     "DEFAULT_TYPES",
+    "BulkData",
+    "BulkFormatError",
     "CheckReport",
     "Columns",
     "CompileResult",
     "CompiledCheck",
     "DataError",
     "Edit",
+    "EditOutcome",
     "Failure",
     "FormulaSyntaxError",
+    "GroundTruthReport",
     "MdrmDictionary",
     "MdrmItem",
     "SkippedEdit",
@@ -46,10 +52,12 @@ __all__ = [
     "compile_edit",
     "compile_edits",
     "filter_edits",
+    "load_bulk",
     "load_items",
     "parse",
     "read_edits_csv",
     "read_taxonomy",
     "run_checks",
+    "run_ground_truth",
     "write_edits_csv",
 ]
