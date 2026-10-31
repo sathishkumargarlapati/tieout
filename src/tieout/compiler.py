@@ -93,8 +93,12 @@ class CompiledCheck:
 
     edit: Edit
     sql: str
+    """The check: one row per institution and report date where the edit does not pass."""
     items: tuple[str, ...]
     """MDRM identifiers the check reads, in order of first appearance."""
+    summary_sql: str = ""
+    """The same check, counted: one row with the institutions and report dates where the
+    edit ran (``evaluated``) and how many ``passed``, ``failed`` or gave ``errors``."""
 
 
 @dataclass(frozen=True)
@@ -370,10 +374,12 @@ class _CheckBuilder:
             raise UnsupportedFormula("the formula does not produce TRUE or FALSE")
         self._collect_gates(self.tree, exempt=False)
         passed = self.emit(self.tree, BOOL)
+        sql, summary_sql = self._render(_wrap(passed, _ATOM))
         return CompiledCheck(
             edit=self.edit,
-            sql=self._render(_wrap(passed, _ATOM)),
+            sql=sql,
             items=tuple(dict.fromkeys(concept.mdrm for concept in self.refs.values())),
+            summary_sql=summary_sql,
         )
 
     # -- gating ----------------------------------------------------------------
@@ -632,7 +638,7 @@ class _CheckBuilder:
 
     # -- rendering -----------------------------------------------------------------
 
-    def _render(self, passed: str) -> str:
+    def _render(self, passed: str) -> tuple[str, str]:
         edit = self.edit
         refs = list(self.refs.values())
         mdrms = list(dict.fromkeys(concept.mdrm for concept in refs))
@@ -718,6 +724,8 @@ class _CheckBuilder:
             f"        {passed} AS passed",
             "    FROM inputs",
             ")",
+        ]
+        check = [
             "SELECT",
             f"    {_quote_literal(edit.edit_id)} AS edit_id,",
             f"    {_quote_literal(edit.edit_type)} AS edit_type,",
@@ -729,7 +737,18 @@ class _CheckBuilder:
             "WHERE passed IS NOT TRUE",
             "ORDER BY rssd_id, report_date",
         ]
-        return "\n".join(lines)
+        summary = [
+            "SELECT",
+            f"    {_quote_literal(edit.edit_id)} AS edit_id,",
+            f"    {_quote_literal(edit.edit_type)} AS edit_type,",
+            "    count(*) AS evaluated,",
+            "    count(*) FILTER (WHERE passed) AS passed,",
+            "    count(*) FILTER (WHERE NOT passed) AS failed,",
+            "    count(*) FILTER (WHERE passed IS NULL) AS errors",
+            "FROM evaluated",
+        ]
+        body = lines[len(banner) :]
+        return "\n".join([*lines, *check]), "\n".join([*body, *summary])
 
     def _item_note(self, mdrm: str) -> str:
         if self.dictionary is None:
