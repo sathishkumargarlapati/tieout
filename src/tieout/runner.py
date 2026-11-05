@@ -46,6 +46,7 @@ __all__ = [
 ]
 
 SOURCE_RELATION = "tieout_source"
+MAX_DATES_SHOWN = 8
 
 FAILURE_COLUMNS = (
     "edit_id",
@@ -100,6 +101,13 @@ class CheckReport:
     skipped: list[SkippedEdit] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
     execution_errors: list[tuple[str, str]] = field(default_factory=list)
+    dates_in_data: list[date] = field(default_factory=list)
+    """The report dates in the data, latest first, listed only when none was checked."""
+
+    @property
+    def nothing_checked(self) -> bool:
+        """True when no edit ran on any institution, so a clean result would mean nothing."""
+        return self.periods_checked == 0 or self.checks_run == 0
 
     def count(self, edit_type: str | None = None, status: str | None = None) -> int:
         """Number of failures, optionally of one edit type and status."""
@@ -143,7 +151,9 @@ class CheckReport:
             f"Checked {self.periods_checked} institution report date(s) "
             f"against {self.checks_run} edit(s).",
         ]
-        if not self.failures:
+        if self.nothing_checked:
+            lines.append(f"Nothing was checked: {self._why_nothing_checked()}.")
+        elif not self.failures:
             lines.append("Every edit that ran passed.")
         else:
             counts = ", ".join(f"{t} {n}" for t, n in sorted(self.by_type().items()))
@@ -159,6 +169,16 @@ class CheckReport:
         if self.execution_errors:
             lines.append(f"{len(self.execution_errors)} check(s) failed to run.")
         return "\n".join(lines)
+
+    def _why_nothing_checked(self) -> str:
+        if self.periods_checked:
+            return "no edit could be compiled"
+        if not self.dates_in_data:
+            return "the data has no rows"
+        shown = ", ".join(when.isoformat() for when in self.dates_in_data[:MAX_DATES_SHOWN])
+        more = len(self.dates_in_data) - MAX_DATES_SHOWN
+        extra = f" and {more} earlier" if more > 0 else ""
+        return f"no rows for that report date; the data has {shown}{extra}"
 
 
 def _quote_ident(name: str) -> str:
@@ -331,6 +351,12 @@ def check(
     con = connection if connection is not None else duckdb.connect()
     periods = load_items(con, data, table=table, columns=columns, report_date=report_date)
     failures, errors = run_checks(con, compiled.checks)
+    dates_in_data: list[date] = []
+    if not periods:
+        rows = con.execute(
+            f"SELECT DISTINCT report_date FROM {ITEMS_RELATION} ORDER BY report_date DESC"
+        ).fetchall()
+        dates_in_data = [row[0] for row in rows]
     return CheckReport(
         failures=failures,
         checks_run=len(compiled.checks),
@@ -338,4 +364,5 @@ def check(
         skipped=compiled.skipped,
         warnings=compiled.warnings,
         execution_errors=errors,
+        dates_in_data=dates_in_data,
     )

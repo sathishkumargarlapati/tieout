@@ -31,6 +31,8 @@ Read the FFIEC CDR's terms of use before you download.
 
 The agreement rate is the share of evaluations that passed. An evaluation is one edit run for one institution.
 
+If no edit ran on any institution, for example because `--only-rssd` matched nobody, TieOut still writes these files so you can see why, and exits with status 2.
+
 ## How to read the results
 
 - **Edits run only on reported items.** Following the FFIEC CDR Interchange Specification, an edit runs for an institution only when every item it uses is in the data. Confidential items are not published (the bulk files mark them `CONF`), so edits that use them do not run. The report counts these as "not run", outside the agreement rate.
