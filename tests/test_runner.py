@@ -197,6 +197,15 @@ def test_report_date_with_no_data(items: Path) -> None:
     report = check(items, EDITS, report_date=date(2030, 3, 31))
     assert report.periods_checked == 0
     assert report.failures == []
+    assert report.nothing_checked
+    assert report.dates_in_data == [date(2026, 6, 30), date(2026, 3, 31)]
+    assert "Every edit that ran passed." not in report.summary()
+
+
+def test_only_the_latest_dates_are_listed() -> None:
+    dates = [date(2026 - n, 12, 31) for n in range(10)]
+    report = CheckReport(checks_run=3, periods_checked=0, dates_in_data=dates)
+    assert report.summary().endswith("2019-12-31 and 2 earlier.")
 
 
 def test_checks_that_fail_to_run_are_reported(items: Path) -> None:

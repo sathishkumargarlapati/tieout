@@ -62,6 +62,18 @@ def _load_edits(path: str, source_pattern: str | None) -> list[Edit]:
     return found.edits
 
 
+def _select_edits(edits: Sequence[Edit], types: Sequence[str] | None, source: str) -> list[Edit]:
+    """Keep the edits of the given types; having none left is an input error."""
+    kept = filter_edits(edits, types)
+    if kept:
+        return kept
+    if not edits:
+        raise DataError(f"{source} has no edits")
+    wanted = ", ".join(types or ()) or "(none given)"
+    found = ", ".join(sorted({edit.edit_type for edit in edits}))
+    raise DataError(f"{source} has no edits of type {wanted}. Types found: {found}")
+
+
 def _load_dictionary(path: str | None) -> MdrmDictionary | None:
     if not path:
         return None
@@ -83,10 +95,10 @@ def _write_text(text: str, out: str | None) -> None:
 def _cmd_extract(args: argparse.Namespace) -> int:
     found = read_taxonomy(args.taxonomy, source_pattern=args.source)
     _say(found.summary())
-    edits = filter_edits(found.edits, args.types)
     if not found.edits:
         _say("No edits were found. Is this the Call Report taxonomy from the FFIEC CDR?")
         return _EXIT_FAILURES
+    edits = _select_edits(found.edits, args.types, args.taxonomy)
     if args.out:
         write_edits_csv(edits, args.out)
         _say(f"Wrote {len(edits)} edits to {args.out}")
@@ -96,7 +108,7 @@ def _cmd_extract(args: argparse.Namespace) -> int:
 
 
 def _cmd_compile(args: argparse.Namespace) -> int:
-    edits = filter_edits(_load_edits(args.edits, args.source), args.types)
+    edits = _select_edits(_load_edits(args.edits, args.source), args.types, args.edits)
     dictionary = _load_dictionary(args.mdrm)
     result = compile_edits(edits, dictionary=dictionary, as_of=args.as_of)
     _write_text(result.to_sql_script(generated_from=Path(args.edits).name), args.out)
@@ -113,7 +125,7 @@ def _cmd_check(args: argparse.Namespace) -> int:
         raise DataError("Give --data FILE, or --database FILE with --table NAME")
     if args.table is not None and args.database is None:
         raise DataError("--table needs --database")
-    edits = _load_edits(args.edits, args.source)
+    edits = _select_edits(_load_edits(args.edits, args.source), args.types, args.edits)
     dictionary = _load_dictionary(args.mdrm)
     connection = duckdb.connect(args.database, read_only=True) if args.database else None
     report = check(
@@ -141,9 +153,7 @@ def _cmd_check(args: argparse.Namespace) -> int:
         _say(f"  {edit_id}: {message}")
     if args.out:
         _say(f"Wrote {len(report.failures)} failure(s) to {args.out}")
-    if report.periods_checked == 0:
-        _say("No institution report dates matched; nothing was checked.")
-    if report.execution_errors:
+    if report.execution_errors or report.nothing_checked:
         return _EXIT_ERROR
     if args.fail_on == "any" and report.failures:
         return _EXIT_FAILURES
@@ -199,7 +209,7 @@ def _cmd_bulk(args: argparse.Namespace) -> int:
 
 
 def _cmd_ground_truth(args: argparse.Namespace) -> int:
-    edits = _load_edits(args.edits, args.source)
+    edits = _select_edits(_load_edits(args.edits, args.source), args.types, args.edits)
     dictionary = _load_dictionary(args.mdrm)
     connection = duckdb.connect()
     bulk = load_bulk(connection, args.bulk, report_date=args.report_date)
@@ -227,6 +237,9 @@ def _cmd_ground_truth(args: argparse.Namespace) -> int:
     for edit_id, message in report.execution_errors:
         _say(f"  {edit_id}: {message}")
     _say(f"Wrote ground-truth.md, ground-truth.csv and failures.csv to {out_dir}")
+    if report.evaluations == 0:
+        _say("Nothing was measured: no edit ran on any institution.")
+        return _EXIT_ERROR
     return _EXIT_ERROR if report.execution_errors else _EXIT_OK
 
 

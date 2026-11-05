@@ -38,6 +38,18 @@ Each institution, report date and item may have only one value. If the same item
 
 Most edits compare items with each other, so units don't matter. An edit that compares an amount with a fixed number does depend on units. Such edits are written for the XBRL reports the agencies receive, in which amounts are in dollars. If your amounts are in thousands, as in the CDR's bulk download files, review those edits before relying on them.
 
+## Exit status
+
+`tieout check` tells a data pipeline how the run went:
+
+| Status | Meaning |
+|---|---|
+| 0 | The edits ran and none of the selected kind failed (`--fail-on`, validity by default) |
+| 1 | The edits ran and an edit failed |
+| 2 | The run could not be trusted: bad input, a check that failed to run, or nothing was checked |
+
+Nothing was checked when `--report-date` matches no rows, the data is empty, or no edit could be compiled. These stop the run with status 2 even with `--fail-on never`, because a run that checked nothing has not passed. A value for `--types` that matches no edit stops it too, and the message lists the types the edits have.
+
 ## Running the SQL yourself
 
 `tieout compile` writes a SQL script with one standalone query per edit. To run it in DuckDB yourself, first create the two relations it reads:

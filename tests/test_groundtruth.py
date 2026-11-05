@@ -147,3 +147,28 @@ def test_cli_bulk_and_ground_truth(tmp_path: Path, capsys: pytest.CaptureFixture
 
 def test_cli_bad_bulk_input(tmp_path: Path) -> None:
     assert main(["bulk", str(tmp_path / "missing.zip"), "--out", str(tmp_path / "x.parquet")]) == 2
+
+
+def test_a_run_that_measures_nothing_is_an_error(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    edits = tmp_path / "edits.csv"
+    edits.write_text(
+        "edit_id,edit_type,expression\nV1,validity,cc:RCON2160[P0] >= 0\n", encoding="utf-8"
+    )
+    only = tmp_path / "filers.txt"
+    only.write_text("999999\n", encoding="utf-8")
+    out = tmp_path / "out"
+    args = [
+        "ground-truth",
+        str(write_bulk_zip(tmp_path)),
+        "--edits",
+        str(edits),
+        "--only-rssd",
+        str(only),
+        "--out-dir",
+        str(out),
+    ]
+    assert main(args) == 2
+    assert "Nothing was measured" in capsys.readouterr().err
+    assert (out / "ground-truth.md").exists()

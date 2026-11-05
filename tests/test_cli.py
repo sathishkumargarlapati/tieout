@@ -133,6 +133,64 @@ def test_input_errors_exit_with_status_2(args: list[str]) -> None:
     assert main(args) == 2
 
 
+def test_a_report_date_not_in_the_data_is_an_error(capsys: pytest.CaptureFixture[str]) -> None:
+    args = ["check", "--data", str(EXAMPLE_ITEMS), "--edits", str(EXAMPLE_EDITS)]
+    assert main([*args, "--report-date", "2026-06-29"]) == 2
+    err = capsys.readouterr().err
+    assert "Nothing was checked: no rows for that report date" in err
+    assert "2026-06-30" in err
+    assert "passed" not in err
+    # A pipeline that never fails on edit failures must still notice an empty run.
+    assert main([*args, "--report-date", "2026-06-29", "--fail-on", "never"]) == 2
+
+
+def test_empty_data_is_an_error(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    data = tmp_path / "items.csv"
+    data.write_text("rssd_id,report_date,mdrm,value\n", encoding="utf-8")
+    assert main(["check", "--data", str(data), "--edits", str(EXAMPLE_EDITS)]) == 2
+    assert "Nothing was checked: the data has no rows." in capsys.readouterr().err
+
+
+def test_no_edit_compiles_is_an_error(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    edits = tmp_path / "edits.csv"
+    edits.write_text(
+        "edit_id,edit_type,expression\nU1,validity,Foo(cc:RCON2160[P0])\n", encoding="utf-8"
+    )
+    assert main(["check", "--data", str(EXAMPLE_ITEMS), "--edits", str(edits)]) == 2
+    err = capsys.readouterr().err
+    assert "Nothing was checked: no edit could be compiled." in err
+    assert "the function Foo() is not supported yet" in err
+
+
+@pytest.mark.parametrize(
+    "args",
+    [
+        ["check", "--data", str(EXAMPLE_ITEMS), "--edits", str(EXAMPLE_EDITS)],
+        ["compile", str(EXAMPLE_EDITS)],
+        ["ground-truth", "unused.zip", "--edits", str(EXAMPLE_EDITS)],
+    ],
+)
+def test_a_mistyped_edit_type_is_an_error(
+    args: list[str], capsys: pytest.CaptureFixture[str]
+) -> None:
+    assert main([*args, "--types", "validty"]) == 2
+    err = capsys.readouterr().err
+    assert "has no edits of type validty. Types found: quality, validity" in err
+
+
+def test_extract_a_type_the_taxonomy_lacks(tmp_path: Path) -> None:
+    assert main(["extract", str(write_taxonomy(tmp_path)), "--types", "validty"]) == 2
+
+
+def test_an_edit_file_with_no_edits_is_an_error(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    edits = tmp_path / "edits.csv"
+    edits.write_text("edit_id,edit_type,expression\n", encoding="utf-8")
+    assert main(["compile", str(edits), "--types", "all"]) == 2
+    assert "has no edits" in capsys.readouterr().err
+
+
 def test_bad_date_argument() -> None:
     with pytest.raises(SystemExit) as raised:
         main(["check", "--data", "a.csv", "--edits", "b.csv", "--report-date", "June"])
