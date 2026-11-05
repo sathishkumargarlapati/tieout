@@ -65,7 +65,7 @@ tieout check --data items.parquet --edits edits.csv --report-date 2026-09-30 --o
 |---|---|
 | `tieout extract` | Reads every edit from the taxonomy (its official identifier, type, formula and published message) into a CSV file your team can review, compare between quarters and keep under version control. It reports how many formulas it found, of which types, and how each edit was identified, so you can confirm the read. |
 | `tieout compile` | Writes one readable SQL query per edit. Each query names the edit, quotes the official formula and lists the items it reads, named from the MDRM dictionary. |
-| `tieout check` | Runs the edits with DuckDB against a CSV file, a Parquet file or a DuckDB table, and saves every failure with the values behind it. It exits with status 1 when a validity edit fails, so a data pipeline can stop a bad number before it travels any further. |
+| `tieout check` | Runs the edits with DuckDB against a CSV file, a Parquet file or a DuckDB table, and saves every failure with the values behind it. It exits with status 1 when a validity edit fails, so a data pipeline can stop a bad number before it travels any further, and with status 2 when nothing was checked. |
 | `tieout mdrm` | Looks items up in the MDRM dictionary: name, type, confidentiality, reporting forms and the dates they are in effect. |
 
 The data to check is one long table: institution, report date, MDRM item and value. [Preparing your data](docs/your-data.md) explains it, and [The edit formula language](docs/rule-language.md) explains how each formula becomes SQL.

@@ -9,6 +9,9 @@ The second module: Ground Truth.
 - `--only-rssd` limits a ground-truth run to a list of institutions, for example the filers of one form.
 - Each compiled check now also has a counted form (`CompiledCheck.summary_sql`): how many institutions the edit ran on, and how many passed, failed or could not be evaluated.
 - Python API: `tieout.load_bulk` and `tieout.run_ground_truth`.
+- A run that checked nothing is no longer reported as a pass. `tieout check` used to print "Every edit that ran passed." and exit with status 0 when `--report-date` matched no rows, the data was empty, or no edit could be compiled. It now says why nothing was checked, lists the report dates in the data, and exits with status 2, even with `--fail-on never`. `tieout ground-truth` exits with status 2 when no edit ran on any institution.
+- `--types` with a value that matches no edit, such as `validty`, is now an error that lists the types found, in `extract`, `compile`, `check` and `ground-truth`. An edit file with no edits is an error too.
+- `CheckReport.nothing_checked` and `CheckReport.dates_in_data` report the same thing to Python callers.
 
 ## 0.1.0 (unreleased)
 
