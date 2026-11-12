@@ -151,10 +151,55 @@ def test_bad_dates(tmp_path: Path) -> None:
         check(path, EDITS)
 
 
+def test_bad_dates_are_shown(tmp_path: Path) -> None:
+    path = write_csv(
+        tmp_path / "items.csv",
+        "rssd_id,report_date,mdrm,value",
+        [
+            "1,June 2026,RCON2160,1",
+            "2,June 2026,RCON2160,1",
+            "3,,RCON2160,1",
+            "4,30.06.2026,RCON2160,1",
+            "5,2026-06-30,RCON2160,1",
+        ],
+    )
+    with pytest.raises(DataError) as raised:
+        check(path, EDITS)
+    message = str(raised.value)
+    assert message.startswith("4 row(s) have a report date that is missing or not a date: ")
+    assert "(empty), '30.06.2026', 'June 2026'." in message
+    assert "MM/DD/YYYY and YYYYMMDD are also accepted" in message
+
+
+def test_many_bad_dates_are_cut_short(tmp_path: Path) -> None:
+    rows = [f"1,day {n},RCON2160,1" for n in range(7)]
+    path = write_csv(tmp_path / "items.csv", "rssd_id,report_date,mdrm,value", rows)
+    with pytest.raises(DataError) as raised:
+        check(path, EDITS)
+    message = str(raised.value)
+    assert "7 row(s)" in message
+    assert "'day 4' and others." in message
+    assert "'day 5'" not in message
+
+
 def test_missing_keys(tmp_path: Path) -> None:
     path = write_csv(tmp_path / "items.csv", "rssd_id,report_date,mdrm,value", ["1,2026-06-30,,1"])
-    with pytest.raises(DataError, match="no institution identifier or no MDRM item"):
+    with pytest.raises(DataError, match="no MDRM item"):
         check(path, EDITS)
+
+
+def test_missing_keys_say_which_is_missing_and_where(tmp_path: Path) -> None:
+    path = write_csv(
+        tmp_path / "items.csv",
+        "rssd_id,report_date,mdrm,value",
+        ["1,2026-06-30,,1", "2,2026-06-30, ,1", ",2026-06-30,RCON2160,1"],
+    )
+    with pytest.raises(DataError) as raised:
+        check(path, EDITS)
+    assert str(raised.value) == (
+        "1 row(s) have no institution identifier; 2 row(s) have no MDRM item "
+        "(institution and date: 1 2026-06-30, 2 2026-06-30)"
+    )
 
 
 def test_conflicting_values_are_rejected(tmp_path: Path) -> None:
@@ -165,6 +210,48 @@ def test_conflicting_values_are_rejected(tmp_path: Path) -> None:
     )
     with pytest.raises(DataError, match="more than one value"):
         check(path, EDITS)
+
+
+def test_conflicting_values_are_shown(tmp_path: Path) -> None:
+    path = write_csv(
+        tmp_path / "items.csv",
+        "rssd_id,report_date,mdrm,value",
+        [
+            "1,2026-06-30,RCON2160,2",
+            "1,2026-06-30,rcon2160 ,1",
+            "2,2026-06-30,RCON2170,5",
+            "2,2026-06-30,RCON2170,7",
+            "2,2026-06-30,RCON2170,",
+            "3,2026-06-30,RCON2170,9",
+        ],
+    )
+    with pytest.raises(DataError) as raised:
+        check(path, EDITS)
+    assert str(raised.value) == (
+        "2 item(s) have more than one value for the same institution and report date: "
+        "1 2026-06-30 RCON2160 has 1 and 2; 2 2026-06-30 RCON2170 has 5 and 7"
+    )
+
+
+def test_many_conflicts_are_counted(tmp_path: Path) -> None:
+    rows = [f"{n},2026-06-30,RCON2160,{v}" for n in range(1, 8) for v in (1, 2)]
+    path = write_csv(tmp_path / "items.csv", "rssd_id,report_date,mdrm,value", rows)
+    with pytest.raises(DataError) as raised:
+        check(path, EDITS)
+    message = str(raised.value)
+    assert message.startswith("7 item(s) have more than one value")
+    assert message.endswith("5 2026-06-30 RCON2160 has 1 and 2 and 2 more")
+
+
+def test_bad_dates_in_a_duckdb_table_are_shown() -> None:
+    connection = duckdb.connect()
+    connection.execute(
+        "CREATE TABLE t AS SELECT * FROM (VALUES "
+        "(1, DATE '2026-06-30', 'RCON2160', 1), (2, NULL, 'RCON2160', 1)"
+        ") v(rssd_id, report_date, mdrm, value)"
+    )
+    with pytest.raises(DataError, match=r"1 row\(s\) .* not a date: \(empty\)\."):
+        load_items(connection, table="t")
 
 
 def test_identical_duplicates_are_accepted(tmp_path: Path) -> None:
