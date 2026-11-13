@@ -57,3 +57,22 @@ def test_period_table_in_the_formula_guide(written: str, reads: date) -> None:
     assert period is not None
     sql = _period_date_sql(period, "DATE '2026-12-31'")
     assert duckdb.connect().execute(f"SELECT {sql}").fetchone()[0] == reads
+
+
+def test_conflict_example_in_the_data_guide_is_real(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    guide = (ROOT / "docs" / "your-data.md").read_text(encoding="utf-8")
+    section = guide.split("## One value per item", 1)[1]
+    shown = re.search(r"```text\n(.*?)```", section, re.DOTALL)
+    assert shown is not None
+    data = tmp_path / "items.csv"
+    data.write_text(
+        "rssd_id,report_date,mdrm,value\n"
+        "1,2026-06-30,RCON2160,1\n1,2026-06-30,RCON2160,2\n"
+        "2,2026-06-30,RCON2170,5\n2,2026-06-30,RCON2170,7\n",
+        encoding="utf-8",
+    )
+    status = main(["check", "--data", str(data), "--edits", str(ROOT / "examples" / "edits.csv")])
+    assert status == 2
+    assert capsys.readouterr().err == shown.group(1)

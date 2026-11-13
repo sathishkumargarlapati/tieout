@@ -12,6 +12,7 @@ The second module: Ground Truth.
 - A run that checked nothing is no longer reported as a pass. `tieout check` used to print "Every edit that ran passed." and exit with status 0 when `--report-date` matched no rows, the data was empty, or no edit could be compiled. It now says why nothing was checked, lists the report dates in the data, and exits with status 2, even with `--fail-on never`. `tieout ground-truth` exits with status 2 when no edit ran on any institution.
 - `--types` with a value that matches no edit, such as `validty`, is now an error that lists the types found, in `extract`, `compile`, `check` and `ground-truth`. An edit file with no edits is an error too.
 - `CheckReport.nothing_checked` and `CheckReport.dates_in_data` report the same thing to Python callers.
+- Errors about the data now show the rows behind them. A report date that cannot be read is quoted as written (up to five examples) with the formats that are accepted. A row with no institution and a row with no MDRM item are counted separately, and rows with no item give their institution and date. Items with more than one value are counted, and the first five are listed with their values.
 
 ## 0.1.0 (unreleased)
 

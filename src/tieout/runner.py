@@ -47,6 +47,7 @@ __all__ = [
 
 SOURCE_RELATION = "tieout_source"
 MAX_DATES_SHOWN = 8
+MAX_EXAMPLES_SHOWN = 5
 
 FAILURE_COLUMNS = (
     "edit_id",
@@ -205,6 +206,96 @@ def _file_sql(path: Path) -> str:
     raise DataError(f"{path}: use a CSV or Parquet file")
 
 
+def _parsed_date_sql(column: str) -> str:
+    """SQL reading a report date written as YYYY-MM-DD, MM/DD/YYYY or YYYYMMDD."""
+    as_text = f"CAST({column} AS VARCHAR)"
+    return (
+        f"COALESCE(TRY_CAST({column} AS DATE), "
+        f"CAST(TRY_STRPTIME({as_text}, '%m/%d/%Y') AS DATE), "
+        f"CAST(TRY_STRPTIME({as_text}, '%Y%m%d') AS DATE))"
+    )
+
+
+def _shown(values: Sequence[str], total: int, sep: str = ", ") -> str:
+    """Join examples, saying how many more there are."""
+    more = total - len(values)
+    return sep.join(values) + (f" and {more} more" if more > 0 else "")
+
+
+def _check_keys(connection: duckdb.DuckDBPyConnection, *, source: str, when: str) -> None:
+    """Stop on rows with an unreadable report date, institution or item, naming examples."""
+    bad_dates, no_entity, no_item = connection.execute(
+        f"""SELECT
+            count(*) FILTER (WHERE report_date IS NULL),
+            count(*) FILTER (WHERE rssd_id IS NULL),
+            count(*) FILTER (WHERE mdrm IS NULL OR mdrm = '')
+        FROM {ITEMS_RELATION}"""
+    ).fetchone() or (0, 0, 0)
+    if bad_dates:
+        # Read the examples from the source, since the parsed column is NULL for these rows.
+        rows = connection.execute(
+            f"""SELECT DISTINCT CAST({when} AS VARCHAR) AS written
+            FROM {source}
+            WHERE {_parsed_date_sql(when)} IS NULL
+            ORDER BY written NULLS FIRST
+            LIMIT {MAX_EXAMPLES_SHOWN + 1}"""
+        ).fetchall()
+        written = [repr(row[0]) if row[0] and row[0].strip() else "(empty)" for row in rows]
+        examples = ", ".join(written[:MAX_EXAMPLES_SHOWN])
+        if len(written) > MAX_EXAMPLES_SHOWN:
+            examples += " and others"
+        raise DataError(
+            f"{bad_dates} row(s) have a report date that is missing or not a date: {examples}. "
+            "Use YYYY-MM-DD; MM/DD/YYYY and YYYYMMDD are also accepted"
+        )
+    if no_entity or no_item:
+        parts = []
+        if no_entity:
+            parts.append(f"{no_entity} row(s) have no institution identifier")
+        if no_item:
+            items = connection.execute(
+                f"""SELECT rssd_id, report_date FROM {ITEMS_RELATION}
+                WHERE mdrm IS NULL OR mdrm = ''
+                ORDER BY rssd_id, report_date
+                LIMIT {MAX_EXAMPLES_SHOWN}"""
+            ).fetchall()
+            where = _shown([f"{row[0]} {row[1]}" for row in items], no_item)
+            parts.append(f"{no_item} row(s) have no MDRM item (institution and date: {where})")
+        raise DataError("; ".join(parts))
+
+
+def _check_conflicts(connection: duckdb.DuckDBPyConnection) -> None:
+    """Stop when an item has two different values, naming the items and their values."""
+    rows = connection.execute(
+        f"""SELECT
+            rssd_id,
+            report_date,
+            mdrm,
+            list_sort(list(DISTINCT CAST(value AS VARCHAR))) AS values,
+            count(*) OVER () AS total
+        FROM {ITEMS_RELATION}
+        GROUP BY rssd_id, report_date, mdrm
+        HAVING count(DISTINCT CAST(value AS VARCHAR)) > 1
+        ORDER BY rssd_id, report_date, mdrm
+        LIMIT {MAX_EXAMPLES_SHOWN}"""
+    ).fetchall()
+    if not rows:
+        return
+    total = int(rows[0][4])
+    shown = _shown(
+        [
+            f"{r[0]} {r[1]} {r[2]} has {' and '.join(v for v in r[3] if v is not None)}"
+            for r in rows
+        ],
+        total,
+        sep="; ",
+    )
+    raise DataError(
+        f"{total} item(s) have more than one value for the same institution and report date: "
+        + shown
+    )
+
+
 def load_items(
     connection: duckdb.DuckDBPyConnection,
     data: str | Path | None = None,
@@ -248,12 +339,7 @@ def load_items(
     when = _quote_ident(by_lower[columns.report_date.lower()])
     item = _quote_ident(by_lower[columns.item.lower()])
     value = _quote_ident(by_lower[columns.value.lower()])
-    as_text = f"CAST({when} AS VARCHAR)"
-    parsed_date = (
-        f"COALESCE(TRY_CAST({when} AS DATE), "
-        f"CAST(TRY_STRPTIME({as_text}, '%m/%d/%Y') AS DATE), "
-        f"CAST(TRY_STRPTIME({as_text}, '%Y%m%d') AS DATE))"
-    )
+    parsed_date = _parsed_date_sql(when)
     connection.execute(
         f"""CREATE OR REPLACE TEMP TABLE {ITEMS_RELATION} AS
         SELECT
@@ -264,32 +350,8 @@ def load_items(
         FROM {SOURCE_RELATION}"""
     )
 
-    bad_dates, empty_keys = connection.execute(
-        f"""SELECT
-            count(*) FILTER (WHERE report_date IS NULL),
-            count(*) FILTER (WHERE rssd_id IS NULL OR mdrm IS NULL OR mdrm = '')
-        FROM {ITEMS_RELATION}"""
-    ).fetchone() or (0, 0)
-    if bad_dates:
-        raise DataError(
-            f"{bad_dates} row(s) have a report date that is missing or not a date (use YYYY-MM-DD)"
-        )
-    if empty_keys:
-        raise DataError(f"{empty_keys} row(s) have no institution identifier or no MDRM item")
-
-    conflicts = connection.execute(
-        f"""SELECT rssd_id, report_date, mdrm
-        FROM {ITEMS_RELATION}
-        GROUP BY rssd_id, report_date, mdrm
-        HAVING count(DISTINCT CAST(value AS VARCHAR)) > 1
-        ORDER BY rssd_id, report_date, mdrm
-        LIMIT 5"""
-    ).fetchall()
-    if conflicts:
-        shown = "; ".join(f"{r[0]} {r[1]} {r[2]}" for r in conflicts)
-        raise DataError(
-            "Some items have more than one value for the same institution and report date: " + shown
-        )
+    _check_keys(connection, source=SOURCE_RELATION, when=when)
+    _check_conflicts(connection)
 
     where = f"WHERE report_date = DATE '{report_date.isoformat()}'" if report_date else ""
     connection.execute(

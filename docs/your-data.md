@@ -32,7 +32,17 @@ If an earlier quarter is missing, an edit that needs it does not run. This follo
 
 ## One value per item
 
-Each institution, report date and item may have only one value. If the same item has two different values, TieOut stops and names the item instead of guessing which one is right. Repeated rows with the same value are accepted.
+Each institution, report date and item may have only one value. If the same item has two different values, TieOut stops instead of guessing which one is right. It says how many items are affected and names the first five with their values:
+
+```text
+tieout: error: 2 item(s) have more than one value for the same institution and report date: 1 2026-06-30 RCON2160 has 1 and 2; 2 2026-06-30 RCON2170 has 5 and 7
+```
+
+Repeated rows with the same value are accepted.
+
+## When a row cannot be read
+
+TieOut stops before running any edit if a row has no institution, no MDRM item, or a report date it cannot read. The message counts the rows and shows examples, so you can find them in your data: up to five of the report dates as written (`(empty)` for a blank one), or the institution and date of rows with no item.
 
 ## Units
 
