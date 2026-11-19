@@ -133,6 +133,20 @@ def test_input_errors_exit_with_status_2(args: list[str]) -> None:
     assert main(args) == 2
 
 
+def test_check_names_an_earlier_quarter_left_out_of_the_data(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    lines = EXAMPLE_ITEMS.read_text(encoding="utf-8").splitlines()
+    latest = tmp_path / "latest.csv"
+    latest.write_text(
+        "\n".join(line for line in lines if "2026-03-31" not in line) + "\n", encoding="utf-8"
+    )
+    # The validity edits still fail, so the exit status is unchanged.
+    assert main(["check", "--data", str(latest), "--edits", str(EXAMPLE_EDITS)]) == 1
+    err = capsys.readouterr().err
+    assert "2 edit(s) read report dates that are not in the data: 2026-03-31 (EX-04, EX-05)" in err
+
+
 def test_a_report_date_not_in_the_data_is_an_error(capsys: pytest.CaptureFixture[str]) -> None:
     args = ["check", "--data", str(EXAMPLE_ITEMS), "--edits", str(EXAMPLE_EDITS)]
     assert main([*args, "--report-date", "2026-06-29"]) == 2

@@ -303,3 +303,66 @@ def test_checks_that_fail_to_run_are_reported(items: Path) -> None:
     assert failures == []
     assert errors[0][0] == "Z"
     assert "no_such_table" in errors[0][1]
+
+
+def test_an_earlier_quarter_missing_from_the_data_is_reported(tmp_path: Path) -> None:
+    data = write_csv(
+        tmp_path / "items.csv",
+        "rssd_id,report_date,mdrm,value",
+        ["1,2026-06-30,RCON2170,500", "1,2026-06-30,RCON2160,3"],
+    )
+    report = check(data, EDITS, report_date=date(2026, 6, 30))
+    # Edit B compares with the quarter before, which is not in the data, so it did not run.
+    assert report.failures == []
+    assert report.missing_dates == {date(2026, 3, 31): ["B"]}
+    assert (
+        "1 edit(s) read report dates that are not in the data: 2026-03-31 (B). "
+        "An edit does not run when an item it reads is missing, "
+        "so add those report dates to the data to check them."
+    ) in report.summary()
+
+
+def test_one_institution_without_an_earlier_quarter_is_not_reported(items: Path) -> None:
+    # Institution 1 has 2026-03-31; institution 2 does not, as a new bank would not.
+    report = check(items, EDITS, report_date=date(2026, 6, 30))
+    assert report.missing_dates == {}
+    assert "not in the data" not in report.summary()
+
+
+def test_missing_dates_follow_each_period_and_report_date(tmp_path: Path) -> None:
+    data = write_csv(
+        tmp_path / "items.csv",
+        "rssd_id,report_date,mdrm,value",
+        [
+            "1,2026-03-31,RIAD4340,10",
+            "1,2026-06-30,RIAD4340,20",
+            "1,2026-09-30,RIAD4340,30",
+        ],
+    )
+    edits = [
+        Edit("Q", "quality", "cc:RIAD4340[P0] >= cc:RIAD4340[-P1Q]"),
+        Edit("Y", "quality", "cc:RIAD4340[P0] >= cc:RIAD4340[-P1Y/12-end]"),
+        Edit("N", "validity", "cc:RIAD4340[P0] >= 0"),
+    ]
+    report = check(data, edits, types=None)
+    # Checking all three quarters: -P1Q of 2026-03-31 is 2025-12-31, which is also the
+    # year end before every one of them. Latest first.
+    assert report.missing_dates == {date(2025, 12, 31): ["Q", "Y"]}
+
+    only_september = check(data, edits, types=None, report_date=date(2026, 9, 30))
+    assert only_september.missing_dates == {date(2025, 12, 31): ["Y"]}
+
+
+def test_missing_dates_are_not_looked_for_when_nothing_was_checked(items: Path) -> None:
+    report = check(items, EDITS, report_date=date(2030, 3, 31))
+    assert report.missing_dates == {}
+
+
+def test_many_missing_dates_are_shortened() -> None:
+    missing = {date(2026 - n, 12, 31): [f"E{n}"] for n in range(10)}
+    report = CheckReport(checks_run=10, periods_checked=1, missing_dates=missing)
+    assert (
+        "10 edit(s) read report dates that are not in the data: 2026-12-31, 2025-12-31, "
+        "2024-12-31, 2023-12-31, 2022-12-31, 2021-12-31, 2020-12-31, 2019-12-31 and 2 more "
+        "(E0, E1, E2, E3, E4 and 5 more)."
+    ) in report.summary()

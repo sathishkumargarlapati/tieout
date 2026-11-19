@@ -76,3 +76,19 @@ def test_conflict_example_in_the_data_guide_is_real(
     status = main(["check", "--data", str(data), "--edits", str(ROOT / "examples" / "edits.csv")])
     assert status == 2
     assert capsys.readouterr().err == shown.group(1)
+
+
+def test_missing_quarter_example_in_the_data_guide_is_real(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    guide = (ROOT / "docs" / "your-data.md").read_text(encoding="utf-8")
+    section = guide.split("## Include the quarters the edits compare against", 1)[1]
+    shown = re.search(r"```text\n(.*?)```", section, re.DOTALL)
+    assert shown is not None
+    lines = (ROOT / "examples" / "items.csv").read_text(encoding="utf-8").splitlines()
+    data = tmp_path / "latest.csv"
+    data.write_text(
+        "\n".join(line for line in lines if "2026-03-31" not in line) + "\n", encoding="utf-8"
+    )
+    main(["check", "--data", str(data), "--edits", str(ROOT / "examples" / "edits.csv")])
+    assert shown.group(1) in capsys.readouterr().err
