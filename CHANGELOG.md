@@ -13,6 +13,7 @@ The second module: Ground Truth.
 - `--types` with a value that matches no edit, such as `validty`, is now an error that lists the types found, in `extract`, `compile`, `check` and `ground-truth`. An edit file with no edits is an error too.
 - `CheckReport.nothing_checked` and `CheckReport.dates_in_data` report the same thing to Python callers.
 - Errors about the data now show the rows behind them. A report date that cannot be read is quoted as written (up to five examples) with the formats that are accepted. A row with no institution and a row with no MDRM item are counted separately, and rows with no item give their institution and date. Items with more than one value are counted, and the first five are listed with their values.
+- `tieout check` now names the earlier report dates that edits read but the data leaves out, such as last quarter or last year end, with the edits that read them. An edit that compares with a missing quarter does not run, so before this a run on one quarter's data could look clean while those edits never ran. A date is named only when no institution has any row for it. `CheckReport.missing_dates` and `CompiledCheck.periods` give the same information to Python callers.
 
 ## 0.1.0 (unreleased)
 

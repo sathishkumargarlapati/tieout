@@ -29,9 +29,11 @@ from .compiler import (
     PERIODS_RELATION,
     CompiledCheck,
     SkippedEdit,
+    _period_date_sql,
     compile_edits,
 )
 from .edits import DEFAULT_TYPES, Edit, filter_edits
+from .expr import Period
 from .mdrm import MdrmDictionary
 
 __all__ = [
@@ -41,6 +43,7 @@ __all__ = [
     "DataError",
     "Failure",
     "check",
+    "find_missing_dates",
     "load_items",
     "run_checks",
 ]
@@ -104,6 +107,10 @@ class CheckReport:
     execution_errors: list[tuple[str, str]] = field(default_factory=list)
     dates_in_data: list[date] = field(default_factory=list)
     """The report dates in the data, latest first, listed only when none was checked."""
+    missing_dates: dict[date, list[str]] = field(default_factory=dict)
+    """Earlier report dates that edits read but the data has no rows for, latest first,
+    each with the edits that read it. Such an edit does not run, because an item it uses
+    was not reported."""
 
     @property
     def nothing_checked(self) -> bool:
@@ -165,11 +172,28 @@ class CheckReport:
                     f"{errors} of them could not be evaluated (status 'error'), "
                     "usually because a value that must be a number is not one."
                 )
+        if self.missing_dates:
+            lines.append(self._missing_dates_line())
         if self.skipped:
             lines.append(f"{len(self.skipped)} edit(s) were not compiled and did not run.")
         if self.execution_errors:
             lines.append(f"{len(self.execution_errors)} check(s) failed to run.")
         return "\n".join(lines)
+
+    def _missing_dates_line(self) -> str:
+        edits = list(
+            dict.fromkeys(
+                edit_id for edit_ids in self.missing_dates.values() for edit_id in edit_ids
+            )
+        )
+        dates = [when.isoformat() for when in self.missing_dates]
+        return (
+            f"{len(edits)} edit(s) read report dates that are not in the data: "
+            f"{_shown(dates[:MAX_DATES_SHOWN], len(dates))} "
+            f"({_shown(edits[:MAX_EXAMPLES_SHOWN], len(edits))}). "
+            "An edit does not run when an item it reads is missing, "
+            "so add those report dates to the data to check them."
+        )
 
     def _why_nothing_checked(self) -> str:
         if self.periods_checked:
@@ -296,6 +320,43 @@ def _check_conflicts(connection: duckdb.DuckDBPyConnection) -> None:
     )
 
 
+def find_missing_dates(
+    connection: duckdb.DuckDBPyConnection,
+    checks: Iterable[CompiledCheck],
+) -> dict[date, list[str]]:
+    """Find the earlier report dates the checks read that have no rows in the data at all.
+
+    Reads ``tieout_items`` and ``tieout_periods``. Returns each missing date, latest
+    first, with the edits that read it. A date is missing only when no institution
+    has any row for it, which usually means an earlier quarter was left out of the
+    data; one institution without an earlier quarter, such as a new bank, is normal.
+    """
+    by_period: dict[Period, list[str]] = {}
+    for compiled in checks:
+        for period in compiled.periods:
+            if not period.is_current:
+                by_period.setdefault(period, []).append(compiled.edit.edit_id)
+    if not by_period:
+        return {}
+    present = {
+        row[0]
+        for row in connection.execute(
+            f"SELECT DISTINCT report_date FROM {ITEMS_RELATION}"
+        ).fetchall()
+    }
+    missing: dict[date, list[str]] = {}
+    for period, edit_ids in by_period.items():
+        needed = connection.execute(
+            f"""SELECT DISTINCT {_period_date_sql(period, "d.report_date")}
+            FROM (SELECT DISTINCT report_date FROM {PERIODS_RELATION}) AS d"""
+        ).fetchall()
+        for (when,) in needed:
+            if when is not None and when not in present:
+                readers = missing.setdefault(when, [])
+                readers.extend(edit_id for edit_id in edit_ids if edit_id not in readers)
+    return {when: missing[when] for when in sorted(missing, reverse=True)}
+
+
 def load_items(
     connection: duckdb.DuckDBPyConnection,
     data: str | Path | None = None,
@@ -413,6 +474,7 @@ def check(
     con = connection if connection is not None else duckdb.connect()
     periods = load_items(con, data, table=table, columns=columns, report_date=report_date)
     failures, errors = run_checks(con, compiled.checks)
+    missing_dates = find_missing_dates(con, compiled.checks) if periods else {}
     dates_in_data: list[date] = []
     if not periods:
         rows = con.execute(
@@ -427,4 +489,5 @@ def check(
         warnings=compiled.warnings,
         execution_errors=errors,
         dates_in_data=dates_in_data,
+        missing_dates=missing_dates,
     )

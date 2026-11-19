@@ -267,6 +267,7 @@ def test_compiled_check_lists_items_once_in_order() -> None:
         Edit("A", "quality", "cc:RCON2170[P0] <> cc:RCON2170[-P1Q] Or cc:RCON0081[P0] > 0")
     )
     assert check.items == ("RCON2170", "RCON0081")
+    assert [period.label for period in check.periods] == ["P0", "-P1Q"]
 
 
 def test_sql_is_readable() -> None:
