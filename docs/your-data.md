@@ -76,6 +76,8 @@ WHERE report_date = DATE '2026-09-30';
 
 Each query returns the institutions and report dates where its edit does not pass.
 
+To run the checks in Snowflake instead, see [Running the checks in Snowflake](snowflake.md).
+
 ## From Python
 
 ```python

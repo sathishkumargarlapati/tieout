@@ -20,6 +20,9 @@ Following the FFIEC CDR Interchange Specification, an edit does not run for
 an institution and date when any item it uses has not been reported. Items
 that appear only inside ``Exists``, ``ExistsNonNil`` or ``ExistsNonEmpty``
 are exempt, because those functions test for the item itself.
+
+The SQL is written for DuckDB by default. ``dialect="snowflake"`` writes the
+same checks in Snowflake SQL: the same relations, columns and results.
 """
 
 from __future__ import annotations
@@ -49,6 +52,7 @@ from .expr import (
 from .mdrm import MdrmDictionary
 
 __all__ = [
+    "DIALECTS",
     "ITEMS_RELATION",
     "PERIODS_RELATION",
     "CompileResult",
@@ -61,6 +65,10 @@ __all__ = [
 
 ITEMS_RELATION = "tieout_items"
 PERIODS_RELATION = "tieout_periods"
+
+DIALECTS = ("duckdb", "snowflake")
+"""The SQL dialects TieOut can write checks in."""
+_DIALECT_TITLES = {"duckdb": "DuckDB", "snowflake": "Snowflake"}
 
 # Value kinds used while compiling.
 NUM, TEXT, BOOL, DATE, ANY = "num", "text", "bool", "date", "any"
@@ -116,11 +124,13 @@ class CompileResult:
     checks: list[CompiledCheck] = field(default_factory=list)
     skipped: list[SkippedEdit] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
+    dialect: str = "duckdb"
+    """The SQL dialect the checks are written in."""
 
     def to_sql_script(self, generated_from: str = "") -> str:
         """All checks as one SQL script, with a header that explains how to run them."""
         lines = [
-            f"-- TieOut {__version__}: Call Report edit checks for DuckDB",
+            f"-- TieOut {__version__}: Call Report edit checks for {_DIALECT_TITLES[self.dialect]}",
         ]
         if generated_from:
             lines.append(f"-- Generated from: {_one_line(generated_from)}")
@@ -167,16 +177,18 @@ def compile_edit(
     *,
     dictionary: MdrmDictionary | None = None,
     as_of: date | None = None,
+    dialect: str = "duckdb",
 ) -> CompiledCheck:
     """Compile one edit into a SQL query.
 
     Raises :class:`~tieout.expr.FormulaSyntaxError` if the formula cannot be
     parsed and :class:`UnsupportedFormula` if it uses something TieOut cannot
     compile yet. With an MDRM ``dictionary``, the query's header names each
-    item it reads.
+    item it reads. ``dialect`` is one of :data:`DIALECTS`.
     """
+    _check_dialect(dialect)
     tree = parse(edit.expression)
-    return _CheckBuilder(edit, tree, dictionary, as_of).build()
+    return _CheckBuilder(edit, tree, dictionary, as_of, dialect).build()
 
 
 def compile_edits(
@@ -184,18 +196,20 @@ def compile_edits(
     *,
     dictionary: MdrmDictionary | None = None,
     as_of: date | None = None,
+    dialect: str = "duckdb",
 ) -> CompileResult:
     """Compile many edits, setting aside the ones that cannot be compiled.
 
     With an MDRM ``dictionary``, items that are not in it, or not in effect on
-    ``as_of``, are reported as warnings.
+    ``as_of``, are reported as warnings. ``dialect`` is one of :data:`DIALECTS`.
     """
-    result = CompileResult()
+    _check_dialect(dialect)
+    result = CompileResult(dialect=dialect)
     unknown: dict[str, list[str]] = {}
     inactive: dict[str, list[str]] = {}
     for edit in edits:
         try:
-            check = compile_edit(edit, dictionary=dictionary, as_of=as_of)
+            check = compile_edit(edit, dictionary=dictionary, as_of=as_of, dialect=dialect)
         except FormulaSyntaxError as exc:
             result.skipped.append(SkippedEdit(edit, f"formula could not be parsed: {exc.reason}"))
             continue
@@ -245,6 +259,11 @@ def _one_line(text: str) -> str:
     return re.sub(r"\s+", " ", text).strip()
 
 
+def _check_dialect(dialect: str) -> None:
+    if dialect not in DIALECTS:
+        raise ValueError(f"unknown SQL dialect {dialect!r}; choose one of: {', '.join(DIALECTS)}")
+
+
 def _list_ids(edit_ids: list[str]) -> str:
     shown = ", ".join(edit_ids[:5])
     if len(edit_ids) > 5:
@@ -252,23 +271,30 @@ def _list_ids(edit_ids: list[str]) -> str:
     return shown
 
 
-def _period_date_sql(period: Period, report_date: str) -> str:
+def _shift_sql(report_date: str, amount: int, unit: str, dialect: str) -> str:
+    """SQL for ``report_date`` moved by ``amount`` days or months."""
+    if dialect == "snowflake":
+        return f"DATEADD({unit.lower()}, {amount}, {report_date})"
+    sign = "-" if amount < 0 else "+"
+    return f"{report_date} {sign} INTERVAL {abs(amount)} {unit}"
+
+
+def _period_date_sql(period: Period, report_date: str, dialect: str = "duckdb") -> str:
     """SQL for the date a period reference points to, relative to ``report_date``."""
     if period.is_current:
         return report_date
     if period.days:
-        sign = "-" if period.days < 0 else "+"
-        shifted = f"{report_date} {sign} INTERVAL {abs(period.days)} DAY"
+        shifted = _shift_sql(report_date, period.days, "DAY", dialect)
         resolved = f"CAST({shifted} AS DATE)"
     elif period.months:
-        sign = "-" if period.months < 0 else "+"
-        shifted = f"{report_date} {sign} INTERVAL {abs(period.months)} MONTH"
+        shifted = _shift_sql(report_date, period.months, "MONTH", dialect)
         resolved = f"CAST(last_day({shifted}) AS DATE)"
     else:
         shifted = report_date
         resolved = report_date
     if period.anchor_month is not None:
-        return f"CAST(last_day(make_date(year({shifted}), {period.anchor_month}, 1)) AS DATE)"
+        make_date = "DATE_FROM_PARTS" if dialect == "snowflake" else "make_date"
+        return f"CAST(last_day({make_date}(year({shifted}), {period.anchor_month}, 1)) AS DATE)"
     return resolved
 
 
@@ -345,11 +371,13 @@ class _CheckBuilder:
         tree: Node,
         dictionary: MdrmDictionary | None,
         as_of: date | None,
+        dialect: str = "duckdb",
     ) -> None:
         self.edit = edit
         self.tree = tree
         self.dictionary = dictionary
         self.as_of = as_of
+        self.dialect = dialect
         self.refs: dict[str, Concept] = {}
         self.columns: dict[str, str] = {}  # column name in `inputs` -> SQL expression
         self.counted: set[str] = set()
@@ -413,6 +441,26 @@ class _CheckBuilder:
             self._collect_gates(node.left, exempt)
             self._collect_gates(node.right, exempt)
 
+    # -- dialect -------------------------------------------------------------------
+
+    def _try_cast(self, expression: str, sql_type: str) -> str:
+        """Convert a value, giving NULL instead of an error when it cannot be converted."""
+        if self.dialect == "snowflake":
+            # Snowflake's TRY_CAST accepts only text, so the value is made text first.
+            expression = f"CAST({expression} AS VARCHAR)"
+        return f"TRY_CAST({expression} AS {sql_type})"
+
+    def _filtered(self, aggregate: str, condition: str) -> str:
+        """``ANY_VALUE(i.value)`` or ``COUNT(*)`` over only the rows that meet ``condition``."""
+        if self.dialect == "snowflake":
+            if aggregate == "count":
+                return f"COUNT(CASE WHEN {condition} THEN 1 END)"
+            # MAX, not ANY_VALUE: ANY_VALUE could pick the NULL of a row the condition rejects.
+            return f"MAX(CASE WHEN {condition} THEN i.value END)"
+        if aggregate == "count":
+            return f"COUNT(*) FILTER (WHERE {condition})"
+        return f"ANY_VALUE(i.value) FILTER (WHERE {condition})"
+
     # -- columns -------------------------------------------------------------------
 
     def _value_column(self, concepts_: list[Concept], kind: str) -> _Sql:
@@ -421,13 +469,13 @@ class _CheckBuilder:
         raw = raws[0] if len(raws) == 1 else f"COALESCE({', '.join(raws)})"
         base = "|".join(concept.key for concept in concepts_)
         if kind == NUM:
-            name, expression = base, f"TRY_CAST({raw} AS DOUBLE)"
+            name, expression = base, self._try_cast(raw, "DOUBLE")
         elif kind == TEXT:
             name, expression = f"{base}:text", f"CAST({raw} AS VARCHAR)"
         elif kind == BOOL:
-            name, expression = f"{base}:bool", f"TRY_CAST({raw} AS BOOLEAN)"
+            name, expression = f"{base}:bool", self._try_cast(raw, "BOOLEAN")
         else:
-            name, expression = f"{base}:date", f"TRY_CAST({raw} AS DATE)"
+            name, expression = f"{base}:date", self._try_cast(raw, "DATE")
         self.columns.setdefault(name, expression)
         return _Sql(_quote_ident(name), _ATOM, kind)
 
@@ -460,11 +508,11 @@ class _CheckBuilder:
         if want == TEXT:
             return _Sql(f"CAST({sql.text} AS VARCHAR)", _ATOM, TEXT)
         if want == NUM and have == TEXT:
-            return _Sql(f"TRY_CAST({sql.text} AS DOUBLE)", _ATOM, NUM)
+            return _Sql(self._try_cast(sql.text, "DOUBLE"), _ATOM, NUM)
         if want == BOOL and have == TEXT:
-            return _Sql(f"TRY_CAST({sql.text} AS BOOLEAN)", _ATOM, BOOL)
+            return _Sql(self._try_cast(sql.text, "BOOLEAN"), _ATOM, BOOL)
         if want == DATE and have == TEXT:
-            return _Sql(f"TRY_CAST({sql.text} AS DATE)", _ATOM, DATE)
+            return _Sql(self._try_cast(sql.text, "DATE"), _ATOM, DATE)
         raise UnsupportedFormula(f"a {_describe(have)} is used where a {_describe(want)} is needed")
 
     def _emit(self, node: Node, want: str) -> _Sql:
@@ -503,7 +551,12 @@ class _CheckBuilder:
         if op in ("+", "-", "*", "/"):
             level = _ADD if op in ("+", "-") else _MUL
             left, right = self.emit(node.left, NUM), self.emit(node.right, NUM)
-            text = f"{_wrap(left, level)} {op} {_wrap(right, level + 1)}"
+            divisor = _wrap(right, level + 1)
+            if op == "/" and self.dialect == "snowflake":
+                # Snowflake stops the whole query on a division by zero. NULLIF makes it an
+                # error for that institution only, like any value that cannot be evaluated.
+                divisor = f"NULLIF({right.text}, 0)"
+            text = f"{_wrap(left, level)} {op} {divisor}"
             return _Sql(text, level, NUM)
         if op == "^":
             left, right = self.emit(node.left, NUM), self.emit(node.right, NUM)
@@ -625,7 +678,7 @@ class _CheckBuilder:
             return _Sql(f"{_wrap(left, _CMP + 1)} = {_wrap(right, _CMP + 1)}", _CMP, BOOL)
         if f == "value":
             arity(1)
-            return _Sql(f"TRY_CAST({self.emit(args[0], TEXT).text} AS DOUBLE)", _ATOM, NUM)
+            return _Sql(self._try_cast(self.emit(args[0], TEXT).text, "DOUBLE"), _ATOM, NUM)
         if f == "char":
             arity(1)
             return _Sql(f"chr({self._integer(args[0])})", _ATOM, TEXT)
@@ -643,7 +696,7 @@ class _CheckBuilder:
         refs = list(self.refs.values())
         mdrms = list(dict.fromkeys(concept.mdrm for concept in refs))
         dates = {
-            concept.key: _period_date_sql(concept.period or Period(), "p.report_date")
+            concept.key: _period_date_sql(concept.period or Period(), "p.report_date", self.dialect)
             for concept in refs
         }
 
@@ -664,13 +717,10 @@ class _CheckBuilder:
         selects = ["        p.rssd_id", "        p.report_date"]
         for key, concept in self.refs.items():
             condition = f"i.mdrm = {_quote_literal(concept.mdrm)} AND i.report_date = {dates[key]}"
-            selects.append(
-                f"        ANY_VALUE(i.value) FILTER (WHERE {condition}) AS {_quote_ident(key)}"
-            )
+            selects.append(f"        {self._filtered('value', condition)} AS {_quote_ident(key)}")
             if key in self.counted:
-                selects.append(
-                    f"        COUNT(*) FILTER (WHERE {condition}) AS {_quote_ident(key + ':rows')}"
-                )
+                rows = _quote_ident(key + ":rows")
+                selects.append(f"        {self._filtered('count', condition)} AS {rows}")
         mdrm_list = ", ".join(_quote_literal(mdrm) for mdrm in mdrms)
         needed_dates = list(dict.fromkeys(dates.values()))
         if len(needed_dates) == 1:
@@ -734,17 +784,30 @@ class _CheckBuilder:
             "    CASE WHEN passed IS NULL THEN 'error' ELSE 'fail' END AS status,",
             "    item_values",
             "FROM evaluated",
-            "WHERE passed IS NOT TRUE",
+            # NOT COALESCE(passed, FALSE) is the portable form of passed IS NOT TRUE.
+            "WHERE NOT COALESCE(passed, FALSE)"
+            if self.dialect == "snowflake"
+            else "WHERE passed IS NOT TRUE",
             "ORDER BY rssd_id, report_date",
         ]
+        if self.dialect == "snowflake":
+            counts = [
+                "    COUNT(CASE WHEN passed THEN 1 END) AS passed,",
+                "    COUNT(CASE WHEN NOT passed THEN 1 END) AS failed,",
+                "    COUNT(CASE WHEN passed IS NULL THEN 1 END) AS errors",
+            ]
+        else:
+            counts = [
+                "    count(*) FILTER (WHERE passed) AS passed,",
+                "    count(*) FILTER (WHERE NOT passed) AS failed,",
+                "    count(*) FILTER (WHERE passed IS NULL) AS errors",
+            ]
         summary = [
             "SELECT",
             f"    {_quote_literal(edit.edit_id)} AS edit_id,",
             f"    {_quote_literal(edit.edit_type)} AS edit_type,",
             "    count(*) AS evaluated,",
-            "    count(*) FILTER (WHERE passed) AS passed,",
-            "    count(*) FILTER (WHERE NOT passed) AS failed,",
-            "    count(*) FILTER (WHERE passed IS NULL) AS errors",
+            *counts,
             "FROM evaluated",
         ]
         body = lines[len(banner) :]

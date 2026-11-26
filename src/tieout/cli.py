@@ -25,7 +25,7 @@ import duckdb
 
 from ._version import __version__
 from .cdr import BULK_ITEMS_TABLE, BulkFormatError, load_bulk
-from .compiler import compile_edits
+from .compiler import DIALECTS, compile_edits
 from .edits import DEFAULT_TYPES, Edit, EditFileError, filter_edits, read_edits_csv, write_edits_csv
 from .groundtruth import read_rssd_list, run_ground_truth
 from .mdrm import MdrmDictionary, MdrmFormatError
@@ -110,7 +110,7 @@ def _cmd_extract(args: argparse.Namespace) -> int:
 def _cmd_compile(args: argparse.Namespace) -> int:
     edits = _select_edits(_load_edits(args.edits, args.source), args.types, args.edits)
     dictionary = _load_dictionary(args.mdrm)
-    result = compile_edits(edits, dictionary=dictionary, as_of=args.as_of)
+    result = compile_edits(edits, dictionary=dictionary, as_of=args.as_of, dialect=args.dialect)
     _write_text(result.to_sql_script(generated_from=Path(args.edits).name), args.out)
     _say(f"Compiled {len(result.checks)} check(s); {len(result.skipped)} edit(s) not compiled.")
     _report_skipped(result.skipped)
@@ -333,6 +333,12 @@ def build_parser() -> argparse.ArgumentParser:
     compile_.add_argument("--source", help=source_help)
     compile_.add_argument("--mdrm", help="MDRM.zip or MDRM_CSV.csv, to name the items")
     compile_.add_argument("--as-of", type=_iso_date, help="report date for MDRM lookups")
+    compile_.add_argument(
+        "--dialect",
+        choices=DIALECTS,
+        default="duckdb",
+        help="the SQL dialect to write (default: duckdb)",
+    )
     compile_.set_defaults(handler=_cmd_compile)
 
     check_ = commands.add_parser(
