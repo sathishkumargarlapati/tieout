@@ -28,7 +28,13 @@ Some edits compare this quarter with earlier ones, for example `cc:RCON2170[P0] 
 tieout check --data items.parquet --edits edits.csv --report-date 2026-09-30
 ```
 
-If an earlier quarter is missing, an edit that needs it does not run. This follows the specification's rule for missing items.
+If an earlier quarter is missing, an edit that needs it does not run. This follows the specification's rule for missing items. So that a missing quarter is not mistaken for a pass, `tieout check` names every report date the edits read that has no rows in the data, with the edits that read it:
+
+```text
+2 edit(s) read report dates that are not in the data: 2026-03-31 (EX-04, EX-05). An edit does not run when an item it reads is missing, so add those report dates to the data to check them.
+```
+
+A date is named only when no institution has any row for it. One institution without an earlier quarter, such as a bank that opened this quarter, is normal and is not reported. Python callers find the same list in `CheckReport.missing_dates`.
 
 ## One value per item
 

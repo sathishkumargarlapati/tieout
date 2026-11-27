@@ -107,6 +107,8 @@ class CompiledCheck:
     summary_sql: str = ""
     """The same check, counted: one row with the institutions and report dates where the
     edit ran (``evaluated``) and how many ``passed``, ``failed`` or gave ``errors``."""
+    periods: tuple[Period, ...] = ()
+    """The periods the check reads, such as ``P0`` and ``-P1Q``, in order of first appearance."""
 
 
 @dataclass(frozen=True)
@@ -408,6 +410,9 @@ class _CheckBuilder:
             sql=sql,
             items=tuple(dict.fromkeys(concept.mdrm for concept in self.refs.values())),
             summary_sql=summary_sql,
+            periods=tuple(
+                dict.fromkeys(concept.period or Period() for concept in self.refs.values())
+            ),
         )
 
     # -- gating ----------------------------------------------------------------
